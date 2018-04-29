@@ -1,0 +1,33 @@
+
+CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
+CMAKE_POLICY(SET CMP0007 NEW)
+
+SET(LIBRARY_NAME    graphics)
+
+PROJECT(${LIBRARY_NAME} C)
+
+SET(PROJECT_DESCRIPTION     "Basic graphics library for embedded systems")
+SET(PROJECT_AUTHOR_NAME     "Chintalagiri Shashank")
+SET(PROJECT_AUTHOR_EMAIL    "shashank.chintalagiri@gmail.com")
+SET(PROJECT_LICENSE         "GPLv3")
+SET(PROJECT_VERSION_MAJOR   1)
+SET(PROJECT_VERSION_MINOR   0)
+SET(PROJECT_VERSION_PATCH   0)
+SET(PROJECT_VERSION_TWEAK   0)
+
+INCLUDE(ebs/lib-conf)
+
+FIND_PACKAGE("ds" REQUIRED)
+
+ADD_FILES(HEADERS   image.h
+                    palette.h)
+
+ADD_FILES(SOURCES   image.c
+                    palette.c)
+
+ADD_PLATFORM_LIBRARY(graphics STATIC "ds" ${SOURCES})
+
+IF(${CMAKE_CURRENT_SOURCE_DIR} STREQUAL ${CMAKE_SOURCE_DIR})
+    INSTALL_PLATFORM_LIBRARY(graphics ${HEADERS})
+    INCLUDE(ebs/lib-doc)
+ENDIF()
