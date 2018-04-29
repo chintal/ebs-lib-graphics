@@ -1,0 +1,17 @@
+doc/resources
+src/config.h
+avr
+msp430
+test/firmware/msp430
+test/firmware/doc
+*.kdev4
+*.kdev_include_paths
+*.idea
+*.cache
+*__pycache__
+*.pyc
+*build
+*.egg-info
+.eggs
+*.pytest_cache
+dist
