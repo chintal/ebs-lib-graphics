@@ -1,0 +1,8 @@
+include README.rst
+include LICENSE
+include ebs/graphics/template/image.c
+include ebs/graphics/template/image.h
+
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+
