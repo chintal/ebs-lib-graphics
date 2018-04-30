@@ -9,6 +9,6 @@
  * @see {{ image.name }}.c
  */
 
-#include "<graphics/image.h>"
+#include <graphics/image.h>
 
 extern const image_t {{ image.name }};

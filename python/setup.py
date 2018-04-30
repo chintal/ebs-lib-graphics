@@ -12,10 +12,16 @@ setuptools.setup(
 
     packages=setuptools.find_packages(),
 
-    install_requires=['pillow'],
+    install_requires=['pillow', 'jinja2', 'argparse'],
 
     setup_requires=['setuptools_scm'],
     use_scm_version={'root': '../', 'relative_to': __file__},
+
+    entry_points={
+        'console_scripts': [
+             'convert-image = ebs.graphics.image:main'
+        ]
+    },
 
     classifiers=[
         'Development Status :: 5 - Production/Stable',

@@ -1,6 +1,7 @@
 
 
 import os
+import argparse
 from PIL import Image
 from jinja2 import Environment, FileSystemLoader
 from . import __version__
@@ -81,7 +82,7 @@ class GraphicsImageFormatBase(object):
     def _line_generator(self):
         raise NotImplementedError
 
-    def generate(self, outpath):
+    def generate(self, outpath, incdir=None):
         stage = {
             'image': self,
             'libversion': __version__,
@@ -89,6 +90,12 @@ class GraphicsImageFormatBase(object):
         }
         with open(os.path.join(outpath, self.name + '.c'), 'w') as f:
             f.write(jinja2_env.get_template('image.c').render(**stage))
+        with open(os.path.join(outpath, self.name + '.h'), 'w') as f:
+            f.write(jinja2_env.get_template('image.h').render(**stage))
+        if incdir:
+            outpath = incdir
+            if not os.path.exists(incdir):
+                os.makedirs(incdir)
         with open(os.path.join(outpath, self.name + '.h'), 'w') as f:
             f.write(jinja2_env.get_template('image.h').render(**stage))
 
@@ -119,6 +126,18 @@ class FormatMonochrome(GraphicsImageFormatBase):
             yield acc
 
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="Input image file to convert")
+    parser.add_argument('-o', '--output', help="Path to the desired output folder")
+    parser.add_argument('--incdir', help="Path to additionally copy the generated headers "
+                                         "to, if different from -o")
+    parser.add_argument('-f', '--format', help="Format of the generated image")
+    args = parser.parse_args()
+
+    converter = globals()['Format{0}'.format(args.format)](args.input)
+    converter.generate(args.output, incdir=args.incdir)
+
+
 if __name__ == '__main__':
-    fm = FormatMonochrome('python/example/lena_96px_1bpp_c.bmp')
-    fm.generate('python/example')
+    main()
