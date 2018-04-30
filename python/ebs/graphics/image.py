@@ -6,8 +6,16 @@ from PIL import Image
 from jinja2 import Environment, FileSystemLoader
 from . import __version__
 
+try:
+    from . import stats
+except ImportError:
+    stats = None
+
+
 jinja2_env = Environment(
-    loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), 'templates/')),
+    loader=FileSystemLoader(
+        os.path.join(os.path.dirname(__file__), 'templates/')
+    ),
     trim_blocks=True,
     keep_trailing_newline=True,
     lstrip_blocks=False,
@@ -25,13 +33,27 @@ class GraphicsImageFormatBase(object):
 
     _supported_encodings = [None]
 
-    def __init__(self, source, bpp, indexed=False, encoding=None):
+    def __init__(self, source, bpp, indexed=False, encoding=None,
+                 x=None, y=None, collect_stats=False):
         self._img = Image.open(source)
         self._source = source
         self._bpp = bpp
         self._indexed = indexed
         self._encoding = encoding
         self._state = {}
+        self._stats = None
+        if collect_stats:
+            if not stats:
+                print("Unable to import the stats module. "
+                      "Not collecting statistics.")
+                return
+            self._stats = stats.StatisticalInformation()
+
+    def _remove_alpha_channel(self, bg=(255, 255, 255, 255)):
+        # Empty canvas colour (r,g,b,a)
+        background = Image.new('RGBA', self._img.size, bg)
+        alpha_composite = Image.alpha_composite(background, self._img)
+        self._img = alpha_composite
 
     @property
     def source(self):
@@ -75,12 +97,15 @@ class GraphicsImageFormatBase(object):
         minsize = None
         for enc in self._supported_encodings:
             self._encoding = enc
+            ps = self.packed_size
+            if self._stats:
+                self._stats.add_datapoint('encoding_result', (enc, ps))
             if minsize is None:
                 smenc = enc
-                minsize = self.packed_size
+                minsize = ps
             else:
-                if self.packed_size < minsize:
-                    minsize = self.packed_size
+                if ps < minsize:
+                    minsize = ps
                     smenc = enc
         self._encoding = smenc
 
@@ -112,6 +137,7 @@ class GraphicsImageFormatBase(object):
 
     @property
     def lines(self):
+        self._state = {}
         return self._line_generator()
 
     def _line_generator(self):
@@ -142,12 +168,29 @@ class GraphicsImageFormatBase(object):
         with open(os.path.join(outpath, self.name + '.h'), 'w') as f:
             f.write(jinja2_env.get_template('image.h').render(**stage))
 
+    def render_stats(self):
+        if self._stats:
+            self._render_stats()
+
+    def _render_stats(self):
+        print("Encoding Results")
+        self._stats.print_table('encoding_result')
+
 
 class FormatMonochrome(GraphicsImageFormatBase):
     _supported_encodings = [None, 'RLC']
 
-    def __init__(self, source, encoding=None):
-        super(FormatMonochrome, self).__init__(source, 1, False, encoding)
+    def __init__(self, source, **kwargs):
+        if kwargs.pop('bpp', 1) != 1:
+            raise ValueError("The monochrome Image formatter "
+                             "only generates 1bpp output.")
+        if kwargs.pop('indexed', False):
+            raise ValueError("Can't index a Monochrome image!")
+        super(FormatMonochrome, self).__init__(source, bpp=1,
+                                               indexed=False, **kwargs)
+        if self._img.mode == 'RGBA':
+            print("Removing Alpha Channel from {0}.".format(self.source))
+            self._remove_alpha_channel()
         self._img = self._img.convert('1')
         if self._encoding == 'AUTO':
             self._get_smallest_encoding()
@@ -166,13 +209,19 @@ class FormatMonochrome(GraphicsImageFormatBase):
         if self._state.get('lend', 0):
             acc = self._state['lacc']
             for bit in range(self._state['lend'], 8):
-                acc = acc << 1 | next(line)
+                nextbit = (1 if next(line) else 0)
+                if self._stats:
+                    self._stats.add_datapoint('bit_distribution', nextbit)
+                acc = acc << 1 | nextbit
             yield acc
         while True:
             acc = 0
             for bit in range(8):
                 try:
-                    acc = acc << 1 | (1 if next(line) else 0)
+                    nextbit = (1 if next(line) else 0)
+                    if self._stats:
+                        self._stats.add_datapoint('bit_distribution', nextbit)
+                    acc = acc << 1 | nextbit
                 except StopIteration:
                     self._state['lend'] = bit
                     self._state['lacc'] = acc
@@ -190,6 +239,8 @@ class FormatMonochrome(GraphicsImageFormatBase):
     def _rlc_byte(self, bit, runlength):
         # Bit goes in LSB. We're going to expect to rely on RLC if speed
         # becomes an issue. This should be revisited at some point.
+        if self._stats:
+            self._stats.add_datapoint('runlengths', runlength)
         return runlength * 2 + bit
 
     def _byte_generator_rlc(self, line):
@@ -215,6 +266,13 @@ class FormatMonochrome(GraphicsImageFormatBase):
                 self._state['lastbit'] = lastbit
                 return
 
+    def _render_stats(self):
+        super(FormatMonochrome, self)._render_stats()
+        print("Rendering Bit Distribution Histogram")
+        self._stats.histogram('bit_distribution')
+        print("Rendering Runlength Histogram")
+        self._stats.histogram('runlengths')
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -224,15 +282,29 @@ def main():
                                          "headers to, if different from -o")
     parser.add_argument('-f', '--format', help="Format of the generated image")
     parser.add_argument('-e', '--encoding', help="Encoding / compression to use")
+    parser.add_argument('-x', type=int, default=None,
+                        help="Target x (horizontal) size in pixels of the image")
+    parser.add_argument('-y', type=int, default=None,
+                        help="Target y (horizontal) size in pixels of the image")
+    parser.add_argument('--stats', default=False, action='store_true',
+                        help="Collect and display some statistics related to the "
+                             "image and its encoding")
     args = parser.parse_args()
 
     if args.encoding == 'NONE':
         args.encoding = None
-    converter = globals()['Format{0}'.format(args.format)](args.input, encoding=args.encoding)
+    converter = globals()['Format{0}'.format(args.format)](
+        args.input, encoding=args.encoding, x=args.x, y=args.y,
+        collect_stats=args.stats
+    )
     converter.generate(args.output, incdir=args.incdir)
-    print("Generated C encoded image using {0} with {1}."
-          "".format(converter.__class__.__name__, converter.encoding))
+    print("Generated C encoded image for {0} using {1} with {2}."
+          "".format(converter.source, converter.__class__.__name__,
+                    converter.encoding))
     print("Estimated output size : {0} bytes".format(converter.packed_size))
+
+    if args.stats:
+        converter.render_stats()
 
 
 if __name__ == '__main__':
