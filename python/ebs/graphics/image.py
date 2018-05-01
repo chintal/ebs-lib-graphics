@@ -22,7 +22,7 @@ jinja2_env = Environment(
 )
 
 
-class GraphicsImageFormatBase(object):
+class ImageSizeMixin(object):
     _length_pointer = 2
     _length_size = 2
     _length_palette_marker = _length_pointer
@@ -31,16 +31,17 @@ class GraphicsImageFormatBase(object):
                       _length_palette_marker +
                       _length_image_format)
 
-    _supported_encodings = [None]
+    @property
+    def packed_size(self):
+        return self._packed_size()
 
-    def __init__(self, source, bpp, indexed=False, encoding=None,
-                 x=None, y=None, collect_stats=False):
-        self._img = Image.open(source)
-        self._source = source
-        self._bpp = bpp
-        self._indexed = indexed
-        self._encoding = encoding
-        self._state = {}
+    def _packed_size(self):
+        size = sum(sum(1 for _ in l) for l in self.lines)
+        return self._length_header + size
+
+
+class ImageStatsMixin(object):
+    def __init__(self, collect_stats=False):
         self._stats = None
         if collect_stats:
             if not stats:
@@ -49,11 +50,57 @@ class GraphicsImageFormatBase(object):
                 return
             self._stats = stats.StatisticalInformation()
 
+    def render_stats(self):
+        if self._stats:
+            self._render_stats()
+
+    def _render_stats(self):
+        raise NotImplementedError
+
+
+class ImagePreformatMixin(object):
     def _remove_alpha_channel(self, bg=(255, 255, 255, 255)):
         # Empty canvas colour (r,g,b,a)
         background = Image.new('RGBA', self._img.size, bg)
         alpha_composite = Image.alpha_composite(background, self._img)
         self._img = alpha_composite
+
+
+class ImageAutoEncodingMixin(ImageSizeMixin, ImageStatsMixin):
+    _supported_encodings = [None]
+
+    def _get_smallest_encoding(self):
+        smenc = None
+        minsize = None
+        for enc in self._supported_encodings:
+            self._encoding = enc
+            ps = self.packed_size
+            if self._stats:
+                self._stats.add_datapoint('encoding_result', (enc, ps))
+            if minsize is None:
+                smenc = enc
+                minsize = ps
+            else:
+                if ps < minsize:
+                    minsize = ps
+                    smenc = enc
+        self._encoding = smenc
+
+    def _render_stats(self):
+        print("Encoding Results")
+        self._stats.print_table('encoding_result')
+
+
+class GraphicsImageFormatBase(ImagePreformatMixin, ImageAutoEncodingMixin):
+    def __init__(self, source, bpp, indexed=False, encoding=None,
+                 x=None, y=None, collect_stats=False):
+        self._img = Image.open(source)
+        self._source = source
+        self._bpp = bpp
+        self._indexed = indexed
+        self._encoding = encoding
+        self._state = {}
+        ImageStatsMixin.__init__(self, collect_stats=collect_stats)
 
     @property
     def source(self):
@@ -92,23 +139,6 @@ class GraphicsImageFormatBase(object):
             return 'IMAGE_ENCODING_RLC'
         raise NotImplementedError
 
-    def _get_smallest_encoding(self):
-        smenc = None
-        minsize = None
-        for enc in self._supported_encodings:
-            self._encoding = enc
-            ps = self.packed_size
-            if self._stats:
-                self._stats.add_datapoint('encoding_result', (enc, ps))
-            if minsize is None:
-                smenc = enc
-                minsize = ps
-            else:
-                if ps < minsize:
-                    minsize = ps
-                    smenc = enc
-        self._encoding = smenc
-
     @property
     def pixeltype(self):
         if self._indexed is False:
@@ -143,14 +173,6 @@ class GraphicsImageFormatBase(object):
     def _line_generator(self):
         raise NotImplementedError
 
-    @property
-    def packed_size(self):
-        return self._packed_size()
-
-    def _packed_size(self):
-        size = sum(sum(1 for _ in l) for l in self.lines)
-        return self._length_header + size
-
     def generate(self, outpath, incdir=None):
         stage = {
             'image': self,
@@ -162,19 +184,10 @@ class GraphicsImageFormatBase(object):
         with open(os.path.join(outpath, self.name + '.h'), 'w') as f:
             f.write(jinja2_env.get_template('image.h').render(**stage))
         if incdir:
-            outpath = incdir
             if not os.path.exists(incdir):
                 os.makedirs(incdir)
-        with open(os.path.join(outpath, self.name + '.h'), 'w') as f:
-            f.write(jinja2_env.get_template('image.h').render(**stage))
-
-    def render_stats(self):
-        if self._stats:
-            self._render_stats()
-
-    def _render_stats(self):
-        print("Encoding Results")
-        self._stats.print_table('encoding_result')
+            with open(os.path.join(incdir, self.name + '.h'), 'w') as f:
+                f.write(jinja2_env.get_template('image.h').render(**stage))
 
 
 class FormatMonochrome(GraphicsImageFormatBase):
